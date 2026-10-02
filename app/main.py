@@ -149,9 +149,10 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse | JS
         return _error(415, str(exc))
     except (AudioTooLongError, FileTooLargeError) as exc:
         return _error(413, str(exc))
-    except Exception:  # noqa: BLE001 — любой сбой модели/декодера отдаём как JSON
+    except Exception as exc:  # noqa: BLE001 — любой сбой модели/декодера отдаём как JSON
         logger.exception("Ошибка при обработке аудио")
-        return _error(500, "Внутренняя ошибка при распознавании аудио.")
+        reason = f"{type(exc).__name__}: {exc}"[:300]
+        return _error(500, f"Внутренняя ошибка при распознавании аудио. {reason}")
     finally:
         if source is not None:
             source.unlink(missing_ok=True)

@@ -22,5 +22,8 @@ RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_
 
 COPY . .
 
+# Проверка при сборке: декодирование аудио (faster-whisper + av) должно работать.
+RUN python -c "import glob; from faster_whisper.audio import decode_audio; print(len(decode_audio(glob.glob('samples/*.wav')[0])))"
+
 # Render передаёт порт в $PORT
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

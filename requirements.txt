@@ -3,4 +3,7 @@ uvicorn[standard]>=0.34,<1
 python-multipart>=0.0.20,<1
 PyYAML>=6.0,<7
 pydantic>=2.10,<3
-faster-whisper>=1.1,<2
+faster-whisper==1.2.1
+# faster-whisper требует только av>=11, а av>=17 ломает декодирование аудио
+# (TypeError: open() got an unexpected keyword argument 'metadata_errors').
+av>=15,<17
