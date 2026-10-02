@@ -7,6 +7,16 @@ from pathlib import Path
 from fastapi import UploadFile
 
 
+PAD_SECONDS = 0.5
+# 80 Гц и ниже — гул и стуки; loudnorm выравнивает тихие и громкие записи к одному уровню.
+AUDIO_FILTER = (
+    "highpass=f=80,"
+    "loudnorm=I=-16:TP=-1.5:LRA=11,"
+    f"adelay={int(PAD_SECONDS * 1000)}:all=1,"
+    f"apad=pad_dur={PAD_SECONDS}"
+)
+
+
 class AudioError(Exception):
     """Base class for audio validation/decoding errors."""
 
@@ -33,7 +43,11 @@ class AudioDecoder:
         max_seconds: float,
         allowed_extensions: list[str],
         max_upload_bytes: int = 25 * 1024 * 1024,
+        preprocess: bool = True,
     ) -> None:
+        self.preprocess = preprocess
+        # Тишина, добавляемая в начало и конец: после распознавания её вычитаем из таймкодов.
+        self.pad_seconds = PAD_SECONDS if preprocess else 0.0
         self.max_seconds = max_seconds
         self.max_upload_bytes = max_upload_bytes
         self.allowed_extensions = {ext.lower() for ext in allowed_extensions}
@@ -103,6 +117,7 @@ class AudioDecoder:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         target = Path(tmp.name)
         tmp.close()
+        filter_args = ["-af", AUDIO_FILTER] if self.preprocess else []
         result = subprocess.run(
             [
                 "ffmpeg",
@@ -111,6 +126,7 @@ class AudioDecoder:
                 "error",
                 "-i",
                 str(source),
+                *filter_args,
                 "-ac",
                 "1",
                 "-ar",

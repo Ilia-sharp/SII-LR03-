@@ -83,6 +83,14 @@
             <span class="button-label">Распознать аудио</span>
             <span class="button-spinner"></span>
           </button>
+
+          <div id="progress" class="progress hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-live="polite">
+            <div class="progress-head">
+              <span id="progress-stage">Загрузка файла…</span>
+              <strong id="progress-percent">0%</strong>
+            </div>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+          </div>
         </div>
 
         <aside class="card scenario-card">

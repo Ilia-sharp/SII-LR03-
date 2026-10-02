@@ -116,3 +116,88 @@ def test_ready_endpoint() -> None:
     with TestClient(app) as client:
         body = client.get("/ready").json()
     assert body["model_loaded"] is False  # в тестах модель не грузится
+
+
+SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "..", "samples", "02_body_wash.wav")
+
+
+class ProgressDummy:
+    """Транскрайбер нового формата: сообщает прогресс и возвращает сегмент с отступом тишины."""
+
+    def transcribe(self, wav_path: str, on_progress=None):
+        from app.asr import Segment
+
+        if on_progress:
+            on_progress(0.5)
+            on_progress(1.0)
+        return "нужна мойка кузова", [Segment(0.5, 1.5, "нужна мойка кузова")]
+
+
+def test_progress_unknown_job_is_waiting() -> None:
+    with TestClient(app) as client:
+        body = client.get("/progress/does-not-exist-123").json()
+    assert body["stage"] == "waiting" and body["percent"] == 0 and body["done"] is False
+
+
+def test_progress_reaches_100_and_timestamps_ignore_padding() -> None:
+    job = "job-test-1234567"
+    with TestClient(app) as client:
+        client.app.state.transcriber = ProgressDummy()
+        with open(SAMPLE_PATH, "rb") as fh:
+            response = client.post(
+                "/transcribe",
+                files={"file": ("s.wav", fh, "audio/wav")},
+                headers={"X-Job-Id": job},
+            )
+        progress = client.get(f"/progress/{job}").json()
+        pad = client.app.state.decoder.pad_seconds
+    assert response.status_code == 200
+    assert progress["percent"] == 100 and progress["done"] is True and progress["stage"] == "done"
+    # тишина, добавленная по краям при подготовке звука, вычтена из таймкодов
+    segment = response.json()["segments"][0]
+    assert segment["start"] == max(0.0, 0.5 - pad)
+    assert segment["end"] == 1.5 - pad
+
+
+def test_progress_marks_error_and_bad_job_id_is_ignored() -> None:
+    job = "job-test-error-1"
+    with TestClient(app) as client:
+        client.post(
+            "/transcribe",
+            files={"file": ("note.txt", b"hello", "text/plain")},
+            headers={"X-Job-Id": job},
+        )
+        error_state = client.get(f"/progress/{job}").json()
+        # некорректный идентификатор не должен ломать запрос
+        response = client.post(
+            "/transcribe",
+            files={"file": ("note.txt", b"hello", "text/plain")},
+            headers={"X-Job-Id": "../../etc/passwd"},
+        )
+    assert error_state["stage"] == "error" and error_state["done"] is True
+    assert response.status_code == 415
+
+
+def test_preprocessing_adds_padding_and_keeps_audio_decodable() -> None:
+    import subprocess
+    from pathlib import Path
+
+    from app.audio import AudioDecoder
+
+    def duration(path: Path) -> float:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        return float(out.stdout.strip())
+
+    source = Path(SAMPLE_PATH)
+    plain = AudioDecoder(60, [".wav"], preprocess=False)
+    prepared = AudioDecoder(60, [".wav"], preprocess=True)
+    wav_plain, wav_prepared = plain.decode_to_wav(source), prepared.decode_to_wav(source)
+    try:
+        assert abs(duration(wav_prepared) - duration(wav_plain) - 2 * prepared.pad_seconds) < 0.1
+        assert plain.pad_seconds == 0.0
+    finally:
+        wav_plain.unlink(missing_ok=True)
+        wav_prepared.unlink(missing_ok=True)

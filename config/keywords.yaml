@@ -5,6 +5,8 @@ model: base
 model_display_name: whisper-base
 model_version: v1.0
 max_audio_seconds: 60
+initial_prompt: "Клиент автомойки. Запись, мойка, кузов, салон."
+preprocess_audio: true
 allowed_extensions:
   - .wav
   - .mp3

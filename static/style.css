@@ -127,3 +127,14 @@ footer a:hover { color:var(--text); }
   .upload-card, .scenario-card, .result-card { padding:16px; }
   .sample-row { align-items:stretch; flex-direction:column; }
 }
+
+/* Индикатор прогресса */
+.progress { margin-top:14px; padding:14px 16px; border:1px solid var(--line); border-radius:14px; background:#fafcfc; }
+.progress-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:12px; color:var(--muted); }
+.progress-head strong { color:var(--text); font-size:20px; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.progress-track { position:relative; height:10px; margin-top:10px; border-radius:999px; background:#e9edf2; overflow:hidden; }
+.progress-bar { position:relative; height:100%; width:0; border-radius:999px; background:linear-gradient(90deg, var(--accent), #2fbf86); transition:width .2s ease-out; overflow:hidden; }
+.progress-bar::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); transform:translateX(-100%); animation:shine 1.3s ease-in-out infinite; }
+.progress.is-done .progress-bar::after { animation:none; opacity:0; }
+@keyframes shine { to { transform:translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .progress-bar::after { animation:none; } .progress-bar { transition:none; } }

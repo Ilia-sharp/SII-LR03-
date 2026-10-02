@@ -24,6 +24,12 @@ class ScenarioConfig(BaseModel):
     max_upload_mb: float = 25.0
     cpu_threads: int = 0  # 0 = решает библиотека; на Render free ставим 1
     beam_size: int = 5
+    # Подсказка Whisper со словарём предметной области: помогает слышать «мойка», «кузов»…
+    # Пустая строка — отключить (например, если в тексте появляются лишние слова из подсказки).
+    initial_prompt: str = ""
+    # Подготовка звука перед распознаванием: фильтр низких частот, выравнивание громкости,
+    # тишина по краям (Whisper иногда «съедает» первое слово в плотно обрезанных записях).
+    preprocess_audio: bool = True
     allowed_extensions: list[str] = Field(
         default_factory=lambda: [".wav", ".mp3", ".m4a", ".ogg", ".webm", ".flac"]
     )
@@ -44,6 +50,10 @@ def load_config(path: Path = CONFIG_PATH) -> ScenarioConfig:
         config.cpu_threads = int(os.environ["WHISPER_CPU_THREADS"])
     if os.getenv("WHISPER_BEAM_SIZE"):
         config.beam_size = int(os.environ["WHISPER_BEAM_SIZE"])
+    if "WHISPER_PROMPT" in os.environ:  # пустое значение тоже учитываем: это «выключить»
+        config.initial_prompt = os.environ["WHISPER_PROMPT"].strip()
+    if os.getenv("AUDIO_PREPROCESS"):
+        config.preprocess_audio = os.environ["AUDIO_PREPROCESS"].strip().lower() not in {"0", "false", "no"}
     if os.getenv("MAX_UPLOAD_MB"):
         config.max_upload_mb = float(os.environ["MAX_UPLOAD_MB"])
     return config

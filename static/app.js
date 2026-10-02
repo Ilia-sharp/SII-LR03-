@@ -135,25 +135,129 @@ function renderResult(data) {
   resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// ---------- прогресс ----------
+const progressEl = $("progress");
+const progressStage = $("progress-stage");
+const progressPercent = $("progress-percent");
+const progressBar = $("progress-bar");
+const UPLOAD_SHARE = 15;      // загрузка файла занимает первые 15 % шкалы
+const CREEP_LIMIT = 88;       // пока сервер считает, шкала ползёт не дальше этого значения
+const progress = { shown: 0, target: 0, phase: "idle", timer: null, poller: null };
+
+function renderProgress() {
+  const value = Math.round(progress.shown);
+  progressBar.style.width = `${progress.shown}%`;
+  progressPercent.textContent = `${value}%`;
+  progressEl.setAttribute("aria-valuenow", String(value));
+}
+
+function progressTick() {
+  if (progress.phase === "server") {
+    // Whisper отдаёт сегменты только по готовности, поэтому между реальными
+    // отметками шкала плавно ползёт вперёд — но не быстрее и не дальше лимита.
+    const creep = progress.shown + (CREEP_LIMIT - progress.shown) * 0.004;
+    progress.target = Math.max(progress.target, Math.min(creep, CREEP_LIMIT));
+  }
+  const diff = progress.target - progress.shown;
+  const speed = progress.phase === "done" ? 0.4 : 0.18;  // в конце догоняем быстрее
+  progress.shown = Math.abs(diff) < 0.05 ? progress.target : progress.shown + diff * speed;
+  if (progress.phase === "done" && progress.shown >= 99.5) progressStage.textContent = "Готово";
+  renderProgress();
+}
+
+function startProgress() {
+  clearInterval(progress.timer);
+  progress.shown = 0;
+  progress.target = 0;
+  progress.phase = "upload";
+  progressEl.classList.remove("hidden", "is-done");
+  progressStage.textContent = "Загрузка файла…";
+  renderProgress();
+  progress.timer = setInterval(progressTick, 60);
+}
+
+function stopProgress() {
+  clearInterval(progress.timer);
+  clearInterval(progress.poller);
+  progress.phase = "idle";
+  progressEl.classList.add("hidden");
+}
+
+async function finishProgress() {
+  clearInterval(progress.poller);
+  progress.phase = "done";
+  progress.target = 100;
+  progressStage.textContent = "Завершаем…";
+  progressEl.classList.add("is-done");
+  await new Promise((resolve) => setTimeout(resolve, 800));  // дать увидеть 100 %
+  stopProgress();
+}
+
+function beginServerPhase(jobId) {
+  progress.phase = "server";
+  progress.target = Math.max(progress.target, UPLOAD_SHARE);
+  progressStage.textContent = "Подготовка аудио…";
+  clearInterval(progress.poller);
+  progress.poller = setInterval(async () => {
+    try {
+      const response = await fetch(`/progress/${jobId}`, { cache: "no-store" });
+      if (!response.ok || progress.phase !== "server") return;
+      const info = await response.json();
+      if (info.stage === "waiting" || info.stage === "error") return;
+      progress.target = Math.max(progress.target, UPLOAD_SHARE + (100 - UPLOAD_SHARE) * (info.percent / 100));
+      progressStage.textContent = `${info.label}…`;
+    } catch { /* следующий опрос исправит */ }
+  }, 350);
+}
+
+function makeJobId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return `job-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function sendFile(file, jobId) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/transcribe");
+    xhr.setRequestHeader("X-Job-Id", jobId);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && progress.phase === "upload") {
+        progress.target = UPLOAD_SHARE * (event.loaded / event.total);
+      }
+    };
+    xhr.upload.onload = () => beginServerPhase(jobId);
+    xhr.onload = () => {
+      let data;
+      try { data = JSON.parse(xhr.responseText); } catch { data = { detail: "Сервер вернул некорректный ответ." }; }
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new Error("Нет связи с сервером. Если он на бесплатном хостинге, подождите минуту и повторите."));
+    xhr.send(form);
+  });
+}
+
 async function transcribe() {
   if (!state.file) return;
   setError("");
   transcribeButton.disabled = true;
   transcribeButton.classList.add("loading");
-
-  const form = new FormData();
-  form.append("file", state.file);
+  transcribeButton.querySelector(".button-label").textContent = "Обрабатываем…";
+  startProgress();
 
   try {
-    const response = await fetch("/transcribe", { method: "POST", body: form });
-    const data = await response.json().catch(() => ({ detail: "Сервер вернул некорректный ответ." }));
-    if (!response.ok) throw new Error(data.detail || `Ошибка HTTP ${response.status}`);
+    const { ok, status, data } = await sendFile(state.file, makeJobId());
+    if (!ok) throw new Error(data.detail || `Ошибка HTTP ${status}`);
+    await finishProgress();
     renderResult(data);
   } catch (error) {
+    stopProgress();
     setError(error.message || "Не удалось обработать аудио.");
   } finally {
     transcribeButton.disabled = !state.file;
     transcribeButton.classList.remove("loading");
+    transcribeButton.querySelector(".button-label").textContent = "Распознать аудио";
   }
 }
 
