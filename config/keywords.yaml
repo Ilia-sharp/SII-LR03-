@@ -1,0 +1,19 @@
+scenario_id: car_wash
+scenario_name: "Автомойка"
+language: ru
+model: base
+model_display_name: whisper-base
+model_version: v1.0
+max_audio_seconds: 60
+allowed_extensions:
+  - .wav
+  - .mp3
+  - .m4a
+  - .ogg
+  - .webm
+  - .flac
+keywords:
+  - мойка
+  - кузов
+  - салон
+  - запись

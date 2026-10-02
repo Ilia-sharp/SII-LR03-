@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sii-lr03-whisper
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: WHISPER_MODEL
+        value: tiny
+      - key: WHISPER_CPU_THREADS
+        value: "1"
+      - key: WHISPER_BEAM_SIZE
+        value: "1"
