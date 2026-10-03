@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
 import os
@@ -10,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Header, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
@@ -119,12 +120,31 @@ app = FastAPI(
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    """Браузер перепроверяет файл при каждой загрузке (ETag → 304), а не берёт старую копию из кеша."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=BASE_DIR / "static"), name="static")
 app.mount("/samples", StaticFiles(directory=BASE_DIR / "samples"), name="samples")
 
 @app.get("/", include_in_schema=False)
-def ui() -> FileResponse:
-    return FileResponse(BASE_DIR / "static" / "index.html")
+def ui() -> HTMLResponse:
+    """Главная страница. К стилям и скриптам добавляется версия (хеш содержимого),
+    поэтому после обновления сайта браузер не покажет новую разметку со старым CSS."""
+    static_dir = BASE_DIR / "static"
+    digest = hashlib.sha1()
+    for name in ("style.css", "app.js"):
+        digest.update((static_dir / name).read_bytes())
+    version = digest.hexdigest()[:10]
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    html = html.replace("/static/style.css", f"/static/style.css?v={version}")
+    html = html.replace("/static/app.js", f"/static/app.js?v={version}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 def _error(status: int, detail: str) -> JSONResponse:
