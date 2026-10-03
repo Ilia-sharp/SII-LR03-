@@ -28,13 +28,14 @@ def test_whisper_call_matches_faster_whisper_signature() -> None:
 
     from app.asr import WhisperTranscriber
 
-    captured: dict = {}
+    calls: list[dict] = []
 
     class FakeModel:
         def transcribe(self, wav_path, **kwargs):
-            captured.update(kwargs)
-            segment = SimpleNamespace(start=0.0, end=2.0, text=" нужна мойка ")
-            return iter([segment]), SimpleNamespace(duration=2.0)
+            calls.append(kwargs)
+            # первый проход «ничего не слышит», второй (страховочный) находит речь
+            items = [] if len(calls) == 1 else [SimpleNamespace(start=0.0, end=2.0, text=" нужна мойка ")]
+            return iter(items), SimpleNamespace(duration=2.0)
 
     transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
     transcriber.model, transcriber.language = FakeModel(), "ru"
@@ -42,7 +43,10 @@ def test_whisper_call_matches_faster_whisper_signature() -> None:
     progress: list[float] = []
     text, segments = transcriber.transcribe("x.wav", on_progress=progress.append)
 
-    inspect.signature(WhisperModel.transcribe).bind(None, "x.wav", **captured)  # бросит TypeError при опечатке
-    assert set(captured["vad_parameters"]) <= set(VadOptions.__dataclass_fields__)
+    assert len(calls) == 2, "при пустом результате должен быть второй, страховочный проход"
+    for kwargs in calls:
+        inspect.signature(WhisperModel.transcribe).bind(None, "x.wav", **kwargs)  # TypeError при опечатке
+    assert set(calls[0]["vad_parameters"]) <= set(VadOptions.__dataclass_fields__)
+    assert calls[0]["vad_filter"] is True and calls[1]["vad_filter"] is False
     assert text == "нужна мойка" and len(segments) == 1
-    assert progress[-1] == 1.0
+    assert progress[-1] == 1.0 and all(a <= b for a, b in zip(progress, progress[1:]))

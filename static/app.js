@@ -1,26 +1,45 @@
-const state = { file: null, result: null };
-// Запасной список на случай, если /scenario недоступен; основной берётся из config/keywords.yaml.
-let keywords = ["мойка", "кузов", "салон", "запись"];
+"use strict";
 
 const $ = (id) => document.getElementById(id);
-const fileInput = $("audio-file");
-const dropZone = $("drop-zone");
-const filePreview = $("file-preview");
-const fileName = $("file-name");
-const fileMeta = $("file-meta");
-const transcribeButton = $("transcribe-button");
-const errorBox = $("error-box");
-const sampleSelect = $("sample-select");
-const resultSection = $("result-section");
-const transcript = $("transcript");
-const foundKeywords = $("found-keywords");
-const emptyKeywords = $("empty-keywords");
-const latency = $("latency");
-const segmentCount = $("segment-count");
-const jsonOutput = $("json-output");
+const els = {
+  fileInput: $("audio-file"), dropZone: $("drop-zone"), player: $("player"),
+  fileName: $("file-name"), fileMeta: $("file-meta"), removeFile: $("remove-file"),
+  playButton: $("play-button"), wave: $("wave"), timeCurrent: $("time-current"), timeTotal: $("time-total"),
+  go: $("transcribe-button"), samples: $("samples"), keywordList: $("keyword-list"),
+  percent: $("progress-percent"), bar: $("progress-bar"), stage: $("progress-stage"),
+  transcript: $("transcript"), latency: $("latency"), errorBox: $("error-box"),
+  healthDot: $("health-dot"), healthText: $("health-text"),
+};
+const states = { idle: $("state-idle"), progress: $("state-progress"), result: $("state-result"), error: $("state-error") };
 
-function renderKeywordChips() {
-  $("keyword-list").innerHTML = keywords.map(k => `<span class="keyword-chip">${escapeHtml(k)}</span>`).join("");
+// Запасной список на случай, если /scenario недоступен; основной берётся из config/keywords.yaml.
+let keywords = ["мойка", "кузов", "салон", "запись"];
+const app = { file: null, busy: false, fileToken: 0 };
+
+/* ---------------------------------------------------------------- состояния */
+function showState(name) {
+  for (const [key, node] of Object.entries(states)) node.classList.toggle("is-active", key === name);
+}
+
+function setError(message) {
+  els.errorBox.textContent = message;
+  showState("error");
+}
+
+/* -------------------------------------------------------- ключевые слова */
+function renderChips(found = []) {
+  const counts = new Map(found.map((item) => [item.keyword, item.count]));
+  els.keywordList.innerHTML = "";
+  for (const word of keywords) {
+    const chip = document.createElement("li");
+    chip.className = "chip" + (counts.has(word) ? " found" : "");
+    chip.append(word);
+    const badge = document.createElement("span");
+    badge.className = "count";
+    badge.textContent = counts.get(word) ?? "";
+    chip.append(badge);
+    els.keywordList.append(chip);
+  }
 }
 
 async function loadScenario() {
@@ -29,191 +48,284 @@ async function loadScenario() {
     if (!response.ok) throw new Error();
     const data = await response.json();
     if (Array.isArray(data.keywords) && data.keywords.length) keywords = data.keywords;
-  } catch {
-    /* остаёмся на запасном списке */
+  } catch { /* остаёмся на запасном списке */ }
+  renderChips();
+}
+
+// Те же правила, что на сервере (app/keywords.py): поиск по основе слова.
+const normalize = (text) => text.toLowerCase().replaceAll("ё", "е");
+function stemOf(word) {
+  const base = normalize(word).replace(/[аяуюыиеоэьй]+$/u, "");
+  return base.length >= 4 ? base : null;
+}
+function matchesKeyword(token, word) {
+  const t = normalize(token);
+  const stem = stemOf(word);
+  return stem ? t.startsWith(stem) : t === normalize(word);
+}
+
+function renderTranscript(text) {
+  els.transcript.textContent = "";
+  // \p{L} — любые буквы, в том числе кириллица (обычный \w её не знает)
+  for (const part of text.split(/([\p{L}\p{N}-]+)/u)) {
+    if (!part) continue;
+    if (/^[\p{L}\p{N}-]+$/u.test(part) && keywords.some((word) => matchesKeyword(part, word))) {
+      const mark = document.createElement("mark");
+      mark.textContent = part;
+      els.transcript.append(mark);
+    } else {
+      els.transcript.append(part);
+    }
   }
-  renderKeywordChips();
 }
 
-function pluralMatches(n) {
-  const mod10 = n % 10, mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return "совпадение";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "совпадения";
-  return "совпадений";
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
-}
-
-function setError(message = "") {
-  errorBox.textContent = message;
-  errorBox.classList.toggle("hidden", !message);
-}
-
-function setFile(file) {
-  setError("");
-  if (!file) return;
-  state.file = file;
-  fileName.textContent = file.name;
-  fileMeta.textContent = `${formatBytes(file.size)} · ${file.type || "аудиофайл"}`;
-  filePreview.classList.remove("hidden");
-  transcribeButton.disabled = false;
-  sampleSelect.value = "";
-}
-
-function clearFile() {
-  state.file = null;
-  fileInput.value = "";
-  filePreview.classList.add("hidden");
-  transcribeButton.disabled = true;
-  setError("");
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
-}
-
+/* --------------------------------------------------------------- здоровье */
 async function checkHealth() {
-  const dot = $("health-dot");
-  const text = $("health-text");
+  const set = (cls, text) => { els.healthDot.className = `dot ${cls}`; els.healthText.textContent = text; };
   try {
     const response = await fetch("/health", { cache: "no-store" });
     if (!response.ok) throw new Error();
     const ready = await fetch("/ready", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
-    if (ready && ready.error) {
-      dot.className = "status-dot is-error";
-      text.textContent = "Модель не загрузилась";
+    if (ready?.error) {
+      set("is-error", "Модель не загрузилась");
     } else if (ready && !ready.model_loaded) {
       // Холодный старт на бесплатном хостинге: модель ещё грузится — спрашиваем снова.
-      dot.className = "status-dot is-loading";
-      text.textContent = "Модель загружается…";
+      set("is-loading", "Модель загружается…");
       setTimeout(checkHealth, 3000);
     } else {
-      dot.className = "status-dot is-ok";
-      text.textContent = "Сервис работает";
+      set("is-ok", "Сервис работает");
     }
   } catch {
-    dot.className = "status-dot is-error";
-    text.textContent = "Сервис недоступен";
+    set("is-error", "Сервис недоступен");
     setTimeout(checkHealth, 5000);
   }
 }
 
+/* ------------------------------------------------------------------ плеер */
+const BARS = 64;
+const audio = new Audio();
+audio.preload = "auto";
+const player = { url: null, duration: 0, lastOn: -1, raf: 0, dragging: false };
+
+const fmtTime = (s) => {
+  if (!Number.isFinite(s) || s < 0) s = 0;
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+};
+const fmtBytes = (n) => (n < 1024 ? `${n} Б` : n < 1048576 ? `${(n / 1024).toFixed(1)} КБ` : `${(n / 1048576).toFixed(1)} МБ`);
+const totalDuration = () => (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : player.duration);
+
+function buildBars(heights) {
+  els.wave.textContent = "";
+  for (let i = 0; i < BARS; i++) {
+    const bar = document.createElement("span");
+    bar.className = "bar";
+    bar.style.height = `${heights[i]}%`;
+    els.wave.append(bar);
+  }
+  player.lastOn = -1;
+  paintProgress();
+}
+
+async function drawWave(file, token) {
+  // сначала ровная «заготовка», затем настоящая форма звука
+  buildBars(Array.from({ length: BARS }, (_, i) => 22 + 14 * Math.sin(i * 0.7)));
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await ctx.decodeAudioData(await file.arrayBuffer());
+    ctx.close();
+    if (token !== app.fileToken) return;
+    player.duration = decoded.duration;
+    const data = decoded.getChannelData(0);
+    const step = Math.max(1, Math.floor(data.length / BARS));
+    const peaks = Array.from({ length: BARS }, (_, i) => {
+      let max = 0;
+      for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j += 8) max = Math.max(max, Math.abs(data[j]));
+      return max;
+    });
+    const top = Math.max(...peaks) || 1;
+    buildBars(peaks.map((p) => 14 + 86 * Math.pow(p / top, 0.7)));
+    els.timeTotal.textContent = fmtTime(totalDuration());
+  } catch { /* формат не разобрать браузером — остаётся заготовка, плеер всё равно работает */ }
+}
+
+function paintProgress() {
+  const total = totalDuration();
+  const fraction = total ? Math.min(1, audio.currentTime / total) : 0;
+  const on = Math.floor(fraction * BARS);
+  if (on !== player.lastOn) {
+    const bars = els.wave.children;
+    for (let i = 0; i < bars.length; i++) bars[i].classList.toggle("on", i < on);
+    player.lastOn = on;
+  }
+  els.timeCurrent.textContent = fmtTime(audio.currentTime);
+  els.wave.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+}
+
+function playLoop() {
+  paintProgress();
+  if (!audio.paused) player.raf = requestAnimationFrame(playLoop);
+}
+
+function togglePlay() {
+  if (!app.file) return;
+  if (audio.paused) audio.play().catch(() => setError("Браузер не смог воспроизвести этот файл."));
+  else audio.pause();
+}
+
+function seekTo(clientX) {
+  const total = totalDuration();
+  if (!total) return;
+  const rect = els.wave.getBoundingClientRect();
+  audio.currentTime = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) * total;
+  paintProgress();
+}
+
+audio.addEventListener("play", () => { els.playButton.classList.add("is-playing"); cancelAnimationFrame(player.raf); playLoop(); });
+audio.addEventListener("pause", () => { els.playButton.classList.remove("is-playing"); paintProgress(); });
+audio.addEventListener("ended", () => { audio.currentTime = 0; els.playButton.classList.remove("is-playing"); paintProgress(); });
+audio.addEventListener("loadedmetadata", () => { els.timeTotal.textContent = fmtTime(totalDuration()); });
+els.playButton.addEventListener("click", togglePlay);
+els.wave.addEventListener("pointerdown", (event) => { player.dragging = true; els.wave.setPointerCapture(event.pointerId); seekTo(event.clientX); });
+els.wave.addEventListener("pointermove", (event) => { if (player.dragging) seekTo(event.clientX); });
+for (const type of ["pointerup", "pointercancel"]) els.wave.addEventListener(type, () => { player.dragging = false; });
+els.wave.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowRight") { audio.currentTime = Math.min(totalDuration(), audio.currentTime + 2); paintProgress(); event.preventDefault(); }
+  if (event.key === "ArrowLeft") { audio.currentTime = Math.max(0, audio.currentTime - 2); paintProgress(); event.preventDefault(); }
+  if (event.key === " " || event.key === "Enter") { togglePlay(); event.preventDefault(); }
+});
+
+/* ------------------------------------------------------------------ файл */
+function setFile(file, sampleName = "") {
+  if (!file) return;
+  audio.pause();
+  if (player.url) URL.revokeObjectURL(player.url);
+  app.file = file;
+  app.fileToken += 1;
+  player.duration = 0;
+  player.url = URL.createObjectURL(file);
+  audio.src = player.url;
+  els.fileName.textContent = file.name;
+  els.fileMeta.textContent = fmtBytes(file.size);
+  els.timeCurrent.textContent = "0:00";
+  els.timeTotal.textContent = "0:00";
+  els.dropZone.classList.remove("is-active");
+  els.player.classList.add("is-active");
+  els.go.disabled = app.busy;
+  for (const button of els.samples.children) button.classList.toggle("is-current", button.dataset.file === sampleName);
+  renderChips();
+  showState("idle");
+  drawWave(file, app.fileToken);
+}
+
+function clearFile() {
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  if (player.url) URL.revokeObjectURL(player.url);
+  player.url = null;
+  app.file = null;
+  app.fileToken += 1;
+  els.fileInput.value = "";
+  els.player.classList.remove("is-active");
+  els.dropZone.classList.add("is-active");
+  els.go.disabled = true;
+  for (const button of els.samples.children) button.classList.remove("is-current");
+  renderChips();
+  showState("idle");
+}
+
 async function loadSample(filename) {
   try {
-    setError("");
     const response = await fetch(`/samples/${encodeURIComponent(filename)}`);
-    if (!response.ok) throw new Error("Не удалось загрузить sample-файл.");
+    if (!response.ok) throw new Error("Не удалось загрузить пример.");
     const blob = await response.blob();
-    setFile(new File([blob], filename, { type: blob.type || "audio/wav" }));
+    setFile(new File([blob], filename, { type: blob.type || "audio/wav" }), filename);
   } catch (error) {
     setError(error.message);
-    sampleSelect.value = "";
   }
 }
 
-function renderResult(data) {
-  state.result = data;
-  resultSection.classList.remove("hidden");
-  transcript.textContent = data.text || "Речь не распознана.";
-  latency.textContent = `${data.latency_ms ?? "—"} мс`;
-  segmentCount.textContent = `${(data.segments || []).length} сегм.`;
-  jsonOutput.textContent = JSON.stringify(data, null, 2);
+els.fileInput.addEventListener("change", (event) => setFile(event.target.files?.[0]));
+els.removeFile.addEventListener("click", clearFile);
+els.samples.addEventListener("click", (event) => {
+  const button = event.target.closest(".sample");
+  if (button && !app.busy) loadSample(button.dataset.file);
+});
+for (const name of ["dragenter", "dragover"]) els.dropZone.addEventListener(name, (e) => { e.preventDefault(); els.dropZone.classList.add("dragover"); });
+for (const name of ["dragleave", "drop"]) els.dropZone.addEventListener(name, (e) => { e.preventDefault(); els.dropZone.classList.remove("dragover"); });
+els.dropZone.addEventListener("drop", (event) => setFile(event.dataTransfer.files?.[0]));
 
-  foundKeywords.innerHTML = "";
-  const matches = data.keywords_found || [];
-  emptyKeywords.classList.toggle("hidden", matches.length > 0);
-  for (const item of matches) {
-    const card = document.createElement("div");
-    card.className = "found-keyword";
-    card.innerHTML = `<strong>${escapeHtml(item.keyword)}</strong><span>${item.count} ${pluralMatches(item.count)}</span>`;
-    foundKeywords.appendChild(card);
-  }
-  resultSection.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-// ---------- прогресс ----------
-const progressEl = $("progress");
-const progressStage = $("progress-stage");
-const progressPercent = $("progress-percent");
-const progressBar = $("progress-bar");
-const UPLOAD_SHARE = 15;      // загрузка файла занимает первые 15 % шкалы
-const CREEP_LIMIT = 88;       // пока сервер считает, шкала ползёт не дальше этого значения
-const progress = { shown: 0, target: 0, phase: "idle", timer: null, poller: null };
+/* -------------------------------------------------------------- прогресс */
+const UPLOAD_SHARE = 15;   // загрузка файла занимает первые 15 % шкалы
+const CREEP_LIMIT = 88;    // пока сервер считает, шкала ползёт не дальше этого значения
+const prog = { shown: 0, target: 0, phase: "idle", raf: 0, last: 0, poller: 0 };
 
 function renderProgress() {
-  const value = Math.round(progress.shown);
-  progressBar.style.width = `${progress.shown}%`;
-  progressPercent.textContent = `${value}%`;
-  progressEl.setAttribute("aria-valuenow", String(value));
+  const value = Math.round(prog.shown);
+  els.bar.style.width = `${prog.shown}%`;
+  els.percent.textContent = `${value}%`;
+  els.percent.setAttribute("aria-valuenow", String(value));
 }
 
-function progressTick() {
-  if (progress.phase === "server") {
+function progressFrame(now) {
+  if (prog.phase === "idle") return;
+  const dt = Math.min(0.1, (now - prog.last) / 1000 || 0.016);
+  prog.last = now;
+  if (prog.phase === "server") {
     // Whisper отдаёт сегменты только по готовности, поэтому между реальными
-    // отметками шкала плавно ползёт вперёд — но не быстрее и не дальше лимита.
-    const creep = progress.shown + (CREEP_LIMIT - progress.shown) * 0.004;
-    progress.target = Math.max(progress.target, Math.min(creep, CREEP_LIMIT));
+    // отметками шкала плавно ползёт вперёд — но не дальше лимита.
+    prog.target = Math.max(prog.target, Math.min(CREEP_LIMIT, prog.shown + (CREEP_LIMIT - prog.shown) * 0.06 * dt));
   }
-  const diff = progress.target - progress.shown;
-  const speed = progress.phase === "done" ? 0.4 : 0.18;  // в конце догоняем быстрее
-  progress.shown = Math.abs(diff) < 0.05 ? progress.target : progress.shown + diff * speed;
-  if (progress.phase === "done" && progress.shown >= 99.5) progressStage.textContent = "Готово";
+  const rate = prog.phase === "done" ? 14 : 6;
+  prog.shown += (prog.target - prog.shown) * (1 - Math.exp(-dt * rate));
+  if (Math.abs(prog.target - prog.shown) < 0.05) prog.shown = prog.target;
+  if (prog.phase === "done" && prog.shown >= 99.5) els.stage.textContent = "Готово";
   renderProgress();
+  prog.raf = requestAnimationFrame(progressFrame);
 }
 
 function startProgress() {
-  clearInterval(progress.timer);
-  progress.shown = 0;
-  progress.target = 0;
-  progress.phase = "upload";
-  progressEl.classList.remove("hidden", "is-done");
-  progressStage.textContent = "Загрузка файла…";
+  Object.assign(prog, { shown: 0, target: 0, phase: "upload", last: performance.now() });
+  els.stage.textContent = "Загрузка файла…";
   renderProgress();
-  progress.timer = setInterval(progressTick, 60);
+  showState("progress");
+  cancelAnimationFrame(prog.raf);
+  prog.raf = requestAnimationFrame(progressFrame);
 }
 
 function stopProgress() {
-  clearInterval(progress.timer);
-  clearInterval(progress.poller);
-  progress.phase = "idle";
-  progressEl.classList.add("hidden");
+  clearInterval(prog.poller);
+  cancelAnimationFrame(prog.raf);
+  prog.phase = "idle";
 }
 
 async function finishProgress() {
-  clearInterval(progress.poller);
-  progress.phase = "done";
-  progress.target = 100;
-  progressStage.textContent = "Завершаем…";
-  progressEl.classList.add("is-done");
-  await new Promise((resolve) => setTimeout(resolve, 800));  // дать увидеть 100 %
+  clearInterval(prog.poller);
+  prog.phase = "done";
+  prog.target = 100;
+  els.stage.textContent = "Завершаем…";
+  await new Promise((resolve) => setTimeout(resolve, 900));  // дать увидеть 100 %
   stopProgress();
 }
 
 function beginServerPhase(jobId) {
-  progress.phase = "server";
-  progress.target = Math.max(progress.target, UPLOAD_SHARE);
-  progressStage.textContent = "Подготовка аудио…";
-  clearInterval(progress.poller);
-  progress.poller = setInterval(async () => {
+  prog.phase = "server";
+  prog.target = Math.max(prog.target, UPLOAD_SHARE);
+  els.stage.textContent = "Подготовка аудио…";
+  clearInterval(prog.poller);
+  prog.poller = setInterval(async () => {
     try {
       const response = await fetch(`/progress/${jobId}`, { cache: "no-store" });
-      if (!response.ok || progress.phase !== "server") return;
+      if (!response.ok || prog.phase !== "server") return;
       const info = await response.json();
       if (info.stage === "waiting" || info.stage === "error") return;
-      progress.target = Math.max(progress.target, UPLOAD_SHARE + (100 - UPLOAD_SHARE) * (info.percent / 100));
-      progressStage.textContent = `${info.label}…`;
+      prog.target = Math.max(prog.target, UPLOAD_SHARE + (100 - UPLOAD_SHARE) * (info.percent / 100));
+      els.stage.textContent = `${info.label}…`;
     } catch { /* следующий опрос исправит */ }
   }, 350);
 }
 
-function makeJobId() {
-  if (window.crypto?.randomUUID) return crypto.randomUUID();
-  return `job-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-}
+const makeJobId = () => (window.crypto?.randomUUID ? crypto.randomUUID() : `job-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
 
 function sendFile(file, jobId) {
   return new Promise((resolve, reject) => {
@@ -223,9 +335,7 @@ function sendFile(file, jobId) {
     xhr.open("POST", "/transcribe");
     xhr.setRequestHeader("X-Job-Id", jobId);
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && progress.phase === "upload") {
-        progress.target = UPLOAD_SHARE * (event.loaded / event.total);
-      }
+      if (event.lengthComputable && prog.phase === "upload") prog.target = UPLOAD_SHARE * (event.loaded / event.total);
     };
     xhr.upload.onload = () => beginServerPhase(jobId);
     xhr.onload = () => {
@@ -234,59 +344,42 @@ function sendFile(file, jobId) {
       resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
     };
     xhr.onerror = () => reject(new Error("Нет связи с сервером. Если он на бесплатном хостинге, подождите минуту и повторите."));
-    xhr.send(form);
+    xhr.send(form);  // без таймаута: если распознаванию нужно больше времени, мы его ждём
   });
 }
 
-async function transcribe() {
-  if (!state.file) return;
-  setError("");
-  transcribeButton.disabled = true;
-  transcribeButton.classList.add("loading");
-  transcribeButton.querySelector(".button-label").textContent = "Обрабатываем…";
-  startProgress();
+function setBusy(busy) {
+  app.busy = busy;
+  els.go.disabled = busy || !app.file;
+  els.go.classList.toggle("busy", busy);
+  els.go.textContent = busy ? "Обрабатываем…" : "Распознать";
+  els.samples.classList.toggle("is-locked", busy);
+}
 
+async function transcribe() {
+  if (!app.file || app.busy) return;
+  audio.pause();
+  setBusy(true);
+  renderChips();
+  startProgress();
   try {
-    const { ok, status, data } = await sendFile(state.file, makeJobId());
+    const { ok, status, data } = await sendFile(app.file, makeJobId());
     if (!ok) throw new Error(data.detail || `Ошибка HTTP ${status}`);
     await finishProgress();
-    renderResult(data);
+    renderChips(data.keywords_found || []);
+    renderTranscript(data.text || "Речь не распознана.");
+    els.latency.textContent = data.latency_ms ? `Обработано за ${(data.latency_ms / 1000).toFixed(1).replace(".", ",")} с` : "";
+    showState("result");
   } catch (error) {
     stopProgress();
     setError(error.message || "Не удалось обработать аудио.");
   } finally {
-    transcribeButton.disabled = !state.file;
-    transcribeButton.classList.remove("loading");
-    transcribeButton.querySelector(".button-label").textContent = "Распознать аудио";
+    setBusy(false);
   }
 }
+els.go.addEventListener("click", transcribe);
 
-fileInput.addEventListener("change", (event) => setFile(event.target.files?.[0] || null));
-$("remove-file").addEventListener("click", clearFile);
-sampleSelect.addEventListener("change", (event) => event.target.value && loadSample(event.target.value));
-transcribeButton.addEventListener("click", transcribe);
-
-for (const eventName of ["dragenter", "dragover"]) {
-  dropZone.addEventListener(eventName, (event) => { event.preventDefault(); dropZone.classList.add("dragover"); });
-}
-for (const eventName of ["dragleave", "drop"]) {
-  dropZone.addEventListener(eventName, (event) => { event.preventDefault(); dropZone.classList.remove("dragover"); });
-}
-dropZone.addEventListener("drop", (event) => setFile(event.dataTransfer.files?.[0] || null));
-
-$("copy-json").addEventListener("click", async () => {
-  if (!state.result) return;
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(state.result, null, 2));
-    const button = $("copy-json");
-    const original = button.textContent;
-    button.textContent = "Скопировано";
-    setTimeout(() => { button.textContent = original; }, 1400);
-  } catch {
-    setError("Браузер не разрешил копирование JSON.");
-  }
-});
-
-renderKeywordChips();
+/* ------------------------------------------------------------------ старт */
+renderChips();
 loadScenario();
 checkHealth();

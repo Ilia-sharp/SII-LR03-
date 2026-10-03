@@ -8,153 +8,103 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
+  <div class="page">
+    <header class="top">
       <a class="brand" href="/" aria-label="SII-LR03">
         <span class="brand-mark">W</span>
-        <span>
-          <strong>SII-LR03</strong>
-          <small>Whisper · Автомойка</small>
-        </span>
+        <span class="brand-name">SII-LR03</span>
       </a>
-      <div class="topbar-status">
-        <span id="health-dot" class="status-dot is-loading"></span>
+      <div class="status" role="status">
+        <span id="health-dot" class="dot is-loading"></span>
         <span id="health-text">Проверка сервиса…</span>
       </div>
     </header>
 
-    <main>
-      <section class="hero">
-        <div>
-          <span class="eyebrow">Лабораторная работа №3</span>
-          <h1>Аудио → текст → ключевые слова</h1>
-          <p>Загрузите короткую русскую запись. Whisper расшифрует речь, а сервис автоматически выделит слова сценария «Автомойка».</p>
-        </div>
-        <div class="hero-badge">
-          <span>Модель</span>
-          <strong>whisper-base</strong>
-          <small>CPU · ru</small>
-        </div>
+    <main class="stage">
+      <section class="intro">
+        <h1>Аудио → текст → ключевые слова</h1>
+        <ul id="keyword-list" class="keywords" aria-label="Ключевые слова сценария"></ul>
       </section>
 
-      <section class="workspace">
-        <div class="card upload-card">
-          <div class="card-heading">
-            <div>
-              <span class="step">01</span>
-              <h2>Загрузите аудио</h2>
+      <section class="panes">
+        <!-- Слева: запись -->
+        <div class="pane pane-audio">
+          <div class="slot">
+            <label id="drop-zone" class="drop is-active" for="audio-file">
+              <input id="audio-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm,.flac,audio/*">
+              <span class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 13.5v3A2.5 2.5 0 0 0 7.5 19h9a2.5 2.5 0 0 0 2.5-2.5v-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <strong>Перетащите запись</strong>
+              <span>или нажмите, чтобы выбрать файл</span>
+              <small>WAV · MP3 · M4A · OGG · WEBM · FLAC, до 60 секунд</small>
+            </label>
+
+            <div id="player" class="player" aria-label="Прослушивание записи">
+              <div class="player-top">
+                <div class="player-file">
+                  <strong id="file-name">—</strong>
+                  <span id="file-meta">—</span>
+                </div>
+                <button id="remove-file" class="remove" type="button" aria-label="Убрать файл" title="Убрать файл">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div class="player-row">
+                <button id="play-button" class="play" type="button" aria-label="Прослушать запись">
+                  <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.53.85l10.4-6.5a1 1 0 0 0 0-1.7L9.53 4.65A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>
+                  <svg class="icon-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.4" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.4" fill="currentColor"/></svg>
+                </button>
+                <div id="wave" class="wave" role="slider" tabindex="0" aria-label="Перемотка записи" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+              </div>
+              <div class="times"><span id="time-current">0:00</span><span id="time-total">0:00</span></div>
             </div>
-            <span class="limit">до 60 сек</span>
           </div>
 
-          <label id="drop-zone" class="drop-zone" for="audio-file">
-            <input id="audio-file" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm,.flac,audio/*">
-            <span class="upload-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 13.5v3A2.5 2.5 0 0 0 7.5 19h9a2.5 2.5 0 0 0 2.5-2.5v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </span>
-            <strong>Перетащите файл сюда</strong>
-            <span>или нажмите, чтобы выбрать</span>
-            <small>WAV, MP3, M4A, OGG, WEBM, FLAC</small>
-          </label>
-
-          <div id="file-preview" class="file-preview hidden">
-            <div class="file-icon">♪</div>
-            <div class="file-info">
-              <strong id="file-name">—</strong>
-              <span id="file-meta">—</span>
+          <div class="samples">
+            <span class="samples-label">Примеры</span>
+            <div id="samples" class="samples-list">
+              <button type="button" class="sample" data-file="01_booking_wash.wav">Запись на мойку</button>
+              <button type="button" class="sample" data-file="02_body_wash.wav">Мойка кузова</button>
+              <button type="button" class="sample" data-file="03_interior.wav">Салон</button>
+              <button type="button" class="sample" data-file="04_full_service.wav">Запись, кузов и салон</button>
+              <button type="button" class="sample" data-file="05_wash_body_interior.wav">Комплексная мойка</button>
             </div>
-            <button id="remove-file" class="icon-button" type="button" title="Удалить файл" aria-label="Удалить файл">×</button>
           </div>
 
-          <div class="sample-row">
-            <label for="sample-select">Или быстрый тест:</label>
-            <select id="sample-select">
-              <option value="">Выберите готовый sample…</option>
-              <option value="01_booking_wash.wav">Запись на мойку</option>
-              <option value="02_body_wash.wav">Мойка кузова</option>
-              <option value="03_interior.wav">Уборка салона</option>
-              <option value="04_full_service.wav">Комплексная мойка</option>
-              <option value="05_wash_body_interior.wav">Мойка · кузов · салон</option>
-            </select>
-          </div>
-
-          <div id="error-box" class="message error hidden"></div>
-          <button id="transcribe-button" class="primary-button" type="button" disabled>
-            <span class="button-label">Распознать аудио</span>
-            <span class="button-spinner"></span>
-          </button>
-
-          <div id="progress" class="progress hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-live="polite">
-            <div class="progress-head">
-              <span id="progress-stage">Загрузка файла…</span>
-              <strong id="progress-percent">0%</strong>
-            </div>
-            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
-          </div>
+          <button id="transcribe-button" class="go" type="button" disabled>Распознать</button>
         </div>
 
-        <aside class="card scenario-card">
-          <div class="card-heading compact">
-            <div>
-              <span class="step">02</span>
-              <h2>Сценарий</h2>
+        <!-- Справа: результат -->
+        <div class="pane pane-result" aria-live="polite">
+          <div id="state-idle" class="state is-active">
+            <div class="idle-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M5 10v4M9 7v10M13 4v16M17 8v8M21 11v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </div>
-            <span class="scenario-id">car_wash</span>
+            <p class="idle-title">Здесь появится текст</p>
+            <p class="idle-hint">Выберите запись, при желании прослушайте её и нажмите «Распознать»</p>
           </div>
-          <div class="scenario-title">
-            <div class="scenario-icon">🚗</div>
-            <div><strong>Автомойка</strong><span>Поиск терминов из YAML-конфигурации</span></div>
-          </div>
-          <div class="keyword-list" id="keyword-list"></div>
-          <div class="info-line"><span>Язык</span><strong>Русский</strong></div>
-          <div class="info-line"><span>Лимит</span><strong>60 секунд</strong></div>
-        </aside>
-      </section>
 
-      <section id="result-section" class="card result-card hidden">
-        <div class="card-heading">
-          <div>
-            <span class="step">03</span>
-            <h2>Результат распознавания</h2>
+          <div id="state-progress" class="state">
+            <div id="progress-percent" class="percent" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">0%</div>
+            <div class="track"><div id="progress-bar" class="track-bar"></div></div>
+            <p id="progress-stage" class="stage-label">Загрузка файла…</p>
           </div>
-          <button id="copy-json" class="ghost-button" type="button">Копировать JSON</button>
-        </div>
 
-        <div class="result-grid">
-          <div class="transcript-panel">
-            <span class="panel-label">Распознанный текст</span>
-            <div id="transcript" class="transcript">—</div>
-            <div class="result-meta">
-              <span id="latency">—</span>
-              <span id="segment-count">—</span>
-            </div>
+          <div id="state-result" class="state">
+            <span class="label">Распознанный текст</span>
+            <p id="transcript" class="transcript">—</p>
+            <p id="latency" class="meta"></p>
           </div>
-          <div class="keywords-panel">
-            <span class="panel-label">Ключевые слова</span>
-            <div id="found-keywords" class="found-keywords"></div>
-            <div id="empty-keywords" class="empty-state hidden">Ключевые слова из сценария не найдены.</div>
+
+          <div id="state-error" class="state">
+            <span class="label label-error">Не получилось</span>
+            <p id="error-box" class="error-text">—</p>
+            <p class="meta">Проверьте файл и попробуйте ещё раз.</p>
           </div>
         </div>
-
-        <details class="json-details">
-          <summary>Показать полный JSON ответа API</summary>
-          <pre id="json-output"></pre>
-        </details>
-      </section>
-
-      <section class="flow-note">
-        <span class="flow-node">Аудио</span><span class="flow-arrow">→</span>
-        <span class="flow-node">FFmpeg</span><span class="flow-arrow">→</span>
-        <span class="flow-node">Whisper</span><span class="flow-arrow">→</span>
-        <span class="flow-node">Поиск слов</span><span class="flow-arrow">→</span>
-        <span class="flow-node">API</span>
       </section>
     </main>
-
-    <footer>
-      <span>SII-LR03 · Вариант №16</span>
-      <a href="/docs" target="_blank" rel="noreferrer">Swagger API ↗</a>
-    </footer>
   </div>
   <script src="/static/app.js"></script>
 </body>
